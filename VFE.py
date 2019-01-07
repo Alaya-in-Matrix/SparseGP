@@ -3,6 +3,7 @@ from math import pi
 import torch
 import numpy as np
 import traceback
+from sklearn.cluster import KMeans
 
 class VFE:
 
@@ -12,6 +13,7 @@ class VFE:
         self.debug            = conf.get('debug', False)
         self.num_epoch        = conf.get('num_epoch', 200)
         self.lr               = conf.get('lr', 0.005)
+        self.kmeans           = conf.get('kmeans', False)
         self.jitter_u         = 1e-15
         self.num_train        = train_x.shape[0]
         self.dim              = train_x.shape[1]
@@ -43,7 +45,10 @@ class VFE:
         self.log_sf                    = torch.log(torch.tensor(rv)).double();
         self.log_sn                    = torch.log(torch.tensor(1e-3)).double();
         self.log_lscales               = torch.log(rl * torch.ones(self.dim)).double();
-        self.u                         = torch.randn(self.m, self.dim).double()
+        if self.kmeans:
+            self.u = self.kmeans_init()
+        else:
+            self.u = torch.randn(self.m, self.dim).double()
     
     def hyper_requires_grad(self, req_grad = True):
         self.log_sf.requires_grad      = req_grad
@@ -55,7 +60,7 @@ class VFE:
         """
         Use K-means to initialize the inducing points
         """
-        pass
+        return torch.tensor(KMeans(n_clusters = self.m).fit(self.x).cluster_centers_)
 
     def loss(self, X, y):
         """
@@ -92,24 +97,56 @@ class VFE:
         self.init_hyper()
         self.hyper_requires_grad(True)
         # opt = torch.optim.Adam([self.log_sf, self.log_lscales, self.log_sn, self.u], lr = self.lr) # TODO: lr scheduler
-        opt = torch.optim.LBFGS([self.log_sf, self.log_lscales, self.log_sn, self.u], history_size = 10)
+        opt1 = torch.optim.LBFGS([self.log_sf, self.log_lscales, self.log_sn, self.u], max_iter = 10)
+        opt2 = torch.optim.Adam([self.log_sf, self.log_lscales, self.log_sn, self.u], lr = self.lr)
         try:
-            for step in range(self.num_epoch):
+            for step in range(5):
                 def closure():
-                    opt.zero_grad()
+                    opt1.zero_grad()
                     loss = self.loss(self.x, self.y)
                     loss.backward()
                     return loss
-                opt.step(closure)
+                opt1.step(closure)
+                print('BFGS Epoch %d, loss = %g' % (step, self.loss(self.x, self.y)))
+            for step in range(self.num_epoch):
+                def closure():
+                    opt2.zero_grad()
+                    loss = self.loss(self.x, self.y)
+                    loss.backward()
+                    return loss
+                opt2.step(closure)
                 print('Epoch %d, loss = %g' % (step, self.loss(self.x, self.y)))
         except RuntimeError:
             if self.debug:
                 print("Failed to perform Cholesky decomposition, stop optimization")
-
-
+        self.post_train()
+    
+    def post_train(self):
+        self.hyper_requires_grad(False)
+        sn2        = torch.exp(2 * self.log_sn)
+        Kuu        = self.cov(self.u, self.u) + self.jitter_u * torch.eye(self.m)
+        Kxu        = self.cov(self.x, self.u)
+        Kux        = Kxu.t()
+        Luu        = chol(Kuu)
+        S          = Kuu + Kux.mm(Kxu) / sn2
+        LS         = chol(S)
+        self.sf2   = torch.exp(2 * self.log_sf)
+        self.sn2   = sn2
+        self.mu    = Kuu.mv(chol_solve(LS, Kux.mv(self.y))) / sn2
+        self.A     = Kuu.mm(chol_solve(LS, Kuu))
+        self.Luu   = Luu
+        self.alpha = chol_solve(Luu, self.mu)
+        
     def predict(self, x):
-        py  = self.ymean
-        ps2 = self.ystd**2
+        tx = x;
+        if tx.dim() == 1:
+            tx = tx.reshape(1, tx.numel())
+        tx         = (tx - self.xmean) / self.xstd
+        Kxu        = self.cov(tx, self.u)
+        Kux        = Kxu.t()
+        invKuu_Kux = chol_solve(self.Luu, Kux)
+        py         = self.ymean + self.ystd * Kxu.mv(self.alpha)
+        ps2        = self.ystd**2 * (self.sf2 + self.sn2 - ((Kxu * invKuu_Kux.t()) + (invKuu_Kux * self.A.mm(invKuu_Kux)).t()).sum(dim = 1))
         return py, ps2
 
     def BO_obj(self):
