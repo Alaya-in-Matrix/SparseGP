@@ -1,6 +1,7 @@
 from util import *
 from math import pi
 import torch
+import numpy as np
 
 class VFE:
 
@@ -17,7 +18,8 @@ class VFE:
         self.ymean, self.ystd = self.y.mean(dim=0), self.y.std(dim=0)
         self.x                = (self.x - self.xmean) / self.xstd
         self.y                = (self.y - self.ymean) / self.ystd
-
+    
+    # TODO: refer to the pytorch multi-variate normal distribution to speedup this function
     def cov(self, X1, X2):
         """
         SE ARD kernel
@@ -35,14 +37,16 @@ class VFE:
         return sf2 * torch.exp(-0.5 * dist);
 
     def init_hyper(self, rv = 1.0, rl = 1.0):
-        self.log_sf                    = torch.log(torch.tensor(rv));
-        self.log_sn                    = torch.log(torch.tensor(1e-3));
-        self.log_lscales               = torch.log(rl * torch.ones(self.dim));
-        self.u                         = torch.randn(self.m, self.dim)
-        self.log_sf.requires_grad      = True
-        self.log_sn.requires_grad      = True
-        self.log_lscales.requires_grad = True
-        self.u.requires_grad           = True
+        self.log_sf                    = torch.log(torch.tensor(rv)).double();
+        self.log_sn                    = torch.log(torch.tensor(1e-3)).double();
+        self.log_lscales               = torch.log(rl * torch.ones(self.dim)).double();
+        self.u                         = torch.randn(self.m, self.dim).double()
+    
+    def hyper_requires_grad(self, req_grad = True):
+        self.log_sf.requires_grad      = req_grad
+        self.log_sn.requires_grad      = req_grad
+        self.log_lscales.requires_grad = req_grad
+        self.u.requires_grad           = req_grad
 
     def kmeans_init(self):
         """
@@ -55,9 +59,10 @@ class VFE:
         X: num_x * dim
         y: num_x vector
         """
+        num_x  = X.shape[0]
         sf2    = torch.exp(2 * self.log_sf)
         sn2    = torch.exp(2 * self.log_sn)
-        Kuu    = self.cov(self.u, self.u) + self.jitter_u * torch.eye
+        Kuu    = self.cov(self.u, self.u) + self.jitter_u * torch.eye(self.m)
         Kxu    = self.cov(X, self.u)
         Kux    = Kxu.t()
         Luu    = chol(Kuu)
@@ -65,17 +70,20 @@ class VFE:
         LA     = chol(A)
         Kuxy   = Kux.mv(y)
 
-        # -0.5 * (y^T (Q + sn2 * I)^-1 y)
-        loss_1    = - 0.5 * (y.dot(y) - Kuxy.dot(chol_solve(LA, Kuxy))) / sn2
+        # -0.5 * (y' *  inv(Q + sn2 * I) * y)
+        loss_1    = - 0.5 * (y.dot(y) - Kuxy.dot(chol_solve(LA, Kuxy).squeeze())) / sn2
 
         # -0.5 * (log |Q + sn2 * I| + num_x * log(2 * pi))
-        log_det_K = (self.num_x - self.m) * torch.log(sn2) + logDet(LA) - logDet(Luu)
-        loss_2    = -0.5 * (log_det_K + self.num_x * torch.log(torch.tensor(2 * pi)))
+        log_det_K = (num_x - self.m) * torch.log(sn2) + logDet(LA) - logDet(Luu)
+        loss_2    = -0.5 * (log_det_K + num_x * torch.log(torch.tensor(2 * pi)))
        
-        # -(0.5 / sn2) * Tr(K - Q)
-        loss_3 = -0.5 * (sf2 * self.num_x - torch.sum(Kxu * chol_solve(LA, Kux).t())) / sn2
+        # -(0.5 / sn2) * Trace(K - Q)
+        loss_3    = -0.5 * (sf2 * num_x - torch.sum(Kxu * chol_solve(Luu, Kux).t())) / sn2
 
-        return loss_1 + loss_2 + loss_3
+        # loss = log(N(y | 0, sn2 * eye(num_x) + Q)) - (0.5/sn2) * Trace(K - Q)
+        loss      = loss_1 + loss_2 + loss_3
+        
+        return -1 * loss
 
     def train(self):
         pass
