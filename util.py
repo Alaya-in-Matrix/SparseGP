@@ -1,12 +1,10 @@
 import torch
 
 def chol(A):
-    return A.potrf(upper=False)
+    return A.cholesky(upper=False)
 
 def chol_solve(L, y):
-    lx, _ = torch.trtrs(y,  L, upper = False);
-    x, _  = torch.trtrs(lx, L, upper = False, transpose = True);
-    return x
+    return torch.potrs(y, L, upper = False)
 
 def logDet(L):
     return 2 * L.diag().log().sum()
