@@ -12,6 +12,7 @@ class VFE:
         self.m                = conf.get('num_inducing', 200)
         self.debug            = conf.get('debug', False)
         self.num_epoch        = conf.get('num_epoch', 200)
+        self.bfgs_iter        = conf.get('bfgs_iter', 5)
         self.lr               = conf.get('lr', 0.005)
         self.kmeans           = conf.get('kmeans', False)
         self.jitter_u         = 1e-15
@@ -100,7 +101,7 @@ class VFE:
         opt1 = torch.optim.LBFGS([self.log_sf, self.log_lscales, self.log_sn, self.u], max_iter = 10)
         opt2 = torch.optim.Adam([self.log_sf, self.log_lscales, self.log_sn, self.u], lr = self.lr)
         try:
-            for step in range(5):
+            for step in range(self.bfgs_iter):
                 def closure():
                     opt1.zero_grad()
                     loss = self.loss(self.x, self.y)
@@ -147,7 +148,7 @@ class VFE:
         invKuu_Kux = chol_solve(self.Luu, Kux)
         py         = self.ymean + self.ystd * Kxu.mv(self.alpha)
         ps2        = self.ystd**2 * (self.sf2 + self.sn2 - ((Kxu * invKuu_Kux.t()) + (invKuu_Kux * self.A.mm(invKuu_Kux)).t()).sum(dim = 1))
-        return py, ps2
+        return py, ps2.clamp(min = self.ystd**2 * self.sn2)
 
     def BO_obj(self):
         pass
