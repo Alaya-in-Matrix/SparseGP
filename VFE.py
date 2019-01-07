@@ -13,8 +13,10 @@ class VFE:
         self.debug            = conf.get('debug', False)
         self.num_epoch        = conf.get('num_epoch', 200)
         self.bfgs_iter        = conf.get('bfgs_iter', 5)
-        self.lr               = conf.get('lr', 0.005)
         self.kmeans           = conf.get('kmeans', False)
+        self.lr               = conf.get('lr', 0.005)
+        self.rv               = conf.get('rv', 1.0)
+        self.rl               = conf.get('rl', 1.0)
         self.jitter_u         = 1e-15
         self.num_train        = train_x.shape[0]
         self.dim              = train_x.shape[1]
@@ -42,10 +44,10 @@ class VFE:
         dist    = x_norm + y_norm - 2.0 * torch.mm(x, torch.transpose(y, 0, 1))
         return sf2 * torch.exp(-0.5 * dist);
 
-    def init_hyper(self, rv = 1.0, rl = 1.0):
-        self.log_sf                    = torch.log(torch.tensor(rv)).double();
+    def init_hyper(self):
+        self.log_sf                    = torch.log(torch.tensor(self.rv)).double();
         self.log_sn                    = torch.log(torch.tensor(1e-3)).double();
-        self.log_lscales               = torch.log(rl * torch.ones(self.dim)).double();
+        self.log_lscales               = torch.log(self.rl * torch.ones(self.dim)).double();
         if self.kmeans:
             self.u = self.kmeans_init()
         else:
