@@ -2,6 +2,7 @@ from util import *
 from math import pi
 import torch
 import numpy as np
+import traceback
 
 class VFE:
 
@@ -9,6 +10,8 @@ class VFE:
     def __init__(self, train_x, train_y, conf):
         self.m                = conf.get('num_inducing', 200)
         self.debug            = conf.get('debug', False)
+        self.num_epoch        = conf.get('num_epoch', 200)
+        self.lr               = conf.get('lr', 0.005)
         self.jitter_u         = 1e-15
         self.num_train        = train_x.shape[0]
         self.dim              = train_x.shape[1]
@@ -71,7 +74,7 @@ class VFE:
         Kuxy   = Kux.mv(y)
 
         # -0.5 * (y' *  inv(Q + sn2 * I) * y)
-        loss_1    = - 0.5 * (y.dot(y) - Kuxy.dot(chol_solve(LA, Kuxy).squeeze())) / sn2
+        loss_1    = - 0.5 * (y.dot(y) - Kuxy.dot(chol_solve(LA, Kuxy.unsqueeze(1)).squeeze())) / sn2
 
         # -0.5 * (log |Q + sn2 * I| + num_x * log(2 * pi))
         log_det_K = (num_x - self.m) * torch.log(sn2) + logDet(LA) - logDet(Luu)
@@ -86,7 +89,23 @@ class VFE:
         return -1 * loss
 
     def train(self):
-        pass
+        self.init_hyper()
+        self.hyper_requires_grad(True)
+        # opt = torch.optim.Adam([self.log_sf, self.log_lscales, self.log_sn, self.u], lr = self.lr) # TODO: lr scheduler
+        opt = torch.optim.LBFGS([self.log_sf, self.log_lscales, self.log_sn, self.u], history_size = 10)
+        try:
+            for step in range(self.num_epoch):
+                def closure():
+                    opt.zero_grad()
+                    loss = self.loss(self.x, self.y)
+                    loss.backward()
+                    return loss
+                opt.step(closure)
+                print('Epoch %d, loss = %g' % (step, self.loss(self.x, self.y)))
+        except RuntimeError:
+            if self.debug:
+                print("Failed to perform Cholesky decomposition, stop optimization")
+
 
     def predict(self, x):
         py  = self.ymean
