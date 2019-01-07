@@ -3,3 +3,4 @@
 *.swp
 ref/
 debug.py
+__pycache__/
