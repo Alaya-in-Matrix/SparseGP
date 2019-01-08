@@ -18,7 +18,7 @@ class VFE:
         self.lr               = conf.get('lr', 0.005)
         self.rv               = conf.get('rv', 1.0)
         self.rl               = conf.get('rl', 1.0)
-        self.jitter_u         = 1e-15
+        self.jitter_u         = conf.get('jitter_u', 1e-15)
         self.num_train        = train_x.shape[0]
         self.dim              = train_x.shape[1]
         self.x                = train_x.clone()
@@ -42,8 +42,11 @@ class VFE:
         y       = X2 / lscales
         x_norm  = (x**2).sum(1).view(-1, 1) # TODO: understand this line of code
         y_norm  = (y**2).sum(1).view(1, -1)
-        dist    = x_norm + y_norm - 2.0 * torch.mm(x, torch.transpose(y, 0, 1))
-        return sf2 * torch.exp(-0.5 * dist);
+        dist    = (x_norm + y_norm - 2.0 * torch.mm(x, torch.transpose(y, 0, 1))).clamp(min = 0)
+        return sf2 * torch.exp(-0.5 * dist)
+        # dist    = torch.zeros(num_x1, num_x2)
+        # for i in range(num_x1):
+        #     dist[i] = (x[i] - y).pow(2).sum(dim = 1)
 
     def init_hyper(self):
         self.log_sf                    = torch.log(torch.tensor(self.rv)).double();
@@ -75,8 +78,8 @@ class VFE:
         sf2    = torch.exp(2 * self.log_sf)
         sn2    = torch.exp(2 * self.log_sn)
         Kuu    = self.cov(self.u, self.u) + self.jitter_u * torch.eye(self.m)
-        Kxu    = self.cov(X, self.u)
-        Kux    = Kxu.t()
+        Kux    = self.cov(self.u, X)
+        Kxu    = Kux.t()
         Luu    = chol(Kuu)
         A      = sn2 * Kuu + Kux.mm(Kxu)
         LA     = chol(A)
@@ -158,8 +161,8 @@ class VFE:
         self.hyper_requires_grad(False)
         sn2        = torch.exp(2 * self.log_sn)
         Kuu        = self.cov(self.u, self.u) + self.jitter_u * torch.eye(self.m)
-        Kxu        = self.cov(self.x, self.u)
-        Kux        = Kxu.t()
+        Kux        = self.cov(self.u, self.x)
+        Kxu        = Kux.t()
         Luu        = chol(Kuu)
         S          = Kuu + Kux.mm(Kxu) / sn2
         LS         = chol(S)
