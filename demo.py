@@ -15,17 +15,14 @@ test_x  = torch.tensor(np.loadtxt('./datasets/kin_40k/test_x'))
 test_y  = torch.tensor(np.loadtxt('./datasets/kin_40k/test_y'))
 
 conf                 = dict()
-conf['num_inducing'] = 200
+conf['num_inducing'] = 256
 conf['debug']        = False
-conf['num_epoch']    = 200
+conf['num_epoch']    = 300
 conf['jitter_u']     = 1e-6
 conf['kmeans']       = True
-conf['lr']           = 0.01
-conf['rv']           = 1.5
-conf['rl']           = 1.0
 
 model = VFE(train_x, train_y, conf)
-model.train()
+model.train_scipy()
 py, ps2 = model.predict(test_x)
 
 mse  = torch.mean((test_y - py)**2)
