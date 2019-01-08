@@ -3,7 +3,9 @@ from math import pi
 import torch
 import numpy as np
 import traceback
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, MiniBatchKMeans
+from scipy.optimize import minimize, fmin_l_bfgs_b, fmin_cg
+import sys
 
 class VFE:
 
@@ -12,7 +14,6 @@ class VFE:
         self.m                = conf.get('num_inducing', 200)
         self.debug            = conf.get('debug', False)
         self.num_epoch        = conf.get('num_epoch', 200)
-        self.bfgs_iter        = conf.get('bfgs_iter', 5)
         self.kmeans           = conf.get('kmeans', False)
         self.lr               = conf.get('lr', 0.005)
         self.rv               = conf.get('rv', 1.0)
@@ -63,7 +64,7 @@ class VFE:
         """
         Use K-means to initialize the inducing points
         """
-        return torch.tensor(KMeans(n_clusters = self.m).fit(self.x).cluster_centers_)
+        return torch.tensor(MiniBatchKMeans(n_clusters = self.m).fit(self.x).cluster_centers_)
 
     def loss(self, X, y):
         """
@@ -103,7 +104,7 @@ class VFE:
         opt1 = torch.optim.LBFGS([self.log_sf, self.log_lscales, self.log_sn, self.u], max_iter = 10)
         opt2 = torch.optim.Adam([self.log_sf, self.log_lscales, self.log_sn, self.u], lr = self.lr)
         try:
-            for step in range(self.bfgs_iter):
+            for step in range(5):
                 def closure():
                     opt1.zero_grad()
                     loss = self.loss(self.x, self.y)
@@ -123,7 +124,36 @@ class VFE:
             if self.debug:
                 print("Failed to perform Cholesky decomposition, stop optimization")
         self.post_train()
-    
+
+    def train_scipy(self):
+        self.init_hyper()
+        self.hyper_requires_grad(True)
+        def obj(x):
+            self.log_sf      = torch.tensor(x[0])
+            self.log_sn      = torch.tensor(x[1])
+            self.log_lscales = torch.tensor(x[2:2 + self.dim])
+            self.u           = torch.tensor(x[2+self.dim:]).reshape(self.m, self.dim)
+            self.hyper_requires_grad(True)
+            loss             = self.loss(self.x, self.y)
+            loss.backward()
+            grad               = np.zeros(x.shape)
+            grad[0]            = self.log_sf.grad.detach().numpy()
+            grad[1]            = self.log_sn.grad.detach().numpy()
+            grad[2:2+self.dim] = self.log_lscales.grad.detach().numpy()
+            grad[2+self.dim:]   = self.u.grad.reshape(self.m * self.dim).detach().numpy()
+            return loss, grad
+        x0               = np.zeros(2 + self.dim + self.dim * self.m)
+        x0[0]            = self.log_sf.detach().numpy()
+        x0[1]            = self.log_sn.detach().numpy()
+        x0[2:2+self.dim] = self.log_lscales.detach().numpy()
+        x0[2+self.dim:]  = self.u.reshape(self.m * self.dim).detach().numpy()
+        ox, acq_f, _     = fmin_l_bfgs_b(obj, x0, maxiter = self.num_epoch, m = 10, iprint=1)
+        self.log_sf      = torch.tensor(ox[0])
+        self.log_sn      = torch.tensor(ox[1])
+        self.log_lscales = torch.tensor(ox[2:2 + self.dim])
+        self.u           = torch.tensor(ox[2+self.dim:]).reshape(self.m, self.dim)
+        self.post_train()
+
     def post_train(self):
         self.hyper_requires_grad(False)
         sn2        = torch.exp(2 * self.log_sn)

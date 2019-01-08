@@ -18,7 +18,6 @@ conf                 = dict()
 conf['num_inducing'] = 200
 conf['debug']        = False
 conf['num_epoch']    = 200
-conf['bfgs_iter']    = 5
 conf['jitter_u']     = 1e-6
 conf['kmeans']       = True
 conf['lr']           = 0.01
