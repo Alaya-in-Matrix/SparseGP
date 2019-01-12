@@ -15,11 +15,11 @@ class VFE:
         self.m                = min(train_x.shape[0], conf.get('num_inducing', 200))
         self.debug            = conf.get('debug', False)
         self.num_epoch        = conf.get('num_epoch', 200)
-        self.kmeans           = conf.get('kmeans', False)
+        self.kmeans           = conf.get('kmeans', True)
         self.lr               = conf.get('lr', 0.005)
         self.rv               = conf.get('rv', 1.0)
         self.rl               = conf.get('rl', 1.0)
-        self.jitter_u         = conf.get('jitter_u', 1e-15)
+        self.jitter_u         = conf.get('jitter_u', 1e-6)
         self.num_train        = train_x.shape[0]
         self.dim              = train_x.shape[1]
         self.x                = train_x.clone()
