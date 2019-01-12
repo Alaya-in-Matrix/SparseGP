@@ -50,9 +50,9 @@ class VFE:
         #     dist[i] = (x[i] - y).pow(2).sum(dim = 1)
 
     def init_hyper(self):
-        self.log_sf                    = torch.log(torch.tensor(self.rv)).double();
-        self.log_sn                    = torch.log(torch.tensor(1e-3)).double();
-        self.log_lscales               = torch.log(self.rl * torch.ones(self.dim)).double();
+        self.log_sf      = torch.log(torch.tensor(self.rv)).double();
+        self.log_sn      = torch.log(torch.tensor(1e-3)).double();
+        self.log_lscales = torch.log(self.rl * torch.ones(self.dim)).double();
         if self.kmeans:
             self.u = self.kmeans_init()
         else:
