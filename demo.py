@@ -1,11 +1,7 @@
-from VFE import VFE
-from sklearn.datasets import load_boston
-from sklearn.utils import shuffle
-from sklearn.cluster import KMeans
-from util import *
+from VFE  import VFE
+from math import pi
 import torch
 import numpy as np
-from math import pi
 
 torch.set_default_tensor_type('torch.DoubleTensor')
 
