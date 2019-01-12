@@ -1,17 +1,18 @@
-from util import *
-from math import pi
+from util            import *
+from math            import pi
+from sklearn.cluster import KMeans, MiniBatchKMeans
+from sklearn.utils   import shuffle
+from scipy.optimize  import fmin_l_bfgs_b
 import torch
 import numpy as np
 import traceback
-from sklearn.cluster import KMeans, MiniBatchKMeans
-from scipy.optimize import minimize, fmin_l_bfgs_b, fmin_cg
 import sys
 
 class VFE:
 
     # TODO: specify inducing points from constructor
     def __init__(self, train_x, train_y, conf):
-        self.m                = conf.get('num_inducing', 200)
+        self.m                = min(train_x.shape[0], conf.get('num_inducing', 200))
         self.debug            = conf.get('debug', False)
         self.num_epoch        = conf.get('num_epoch', 200)
         self.kmeans           = conf.get('kmeans', False)
@@ -55,7 +56,7 @@ class VFE:
         if self.kmeans:
             self.u = self.kmeans_init()
         else:
-            self.u = torch.randn(self.m, self.dim).double()
+            self.u = torch.tensor(shuffle(self.x.numpy(), n_samples = self.m))
     
     def hyper_requires_grad(self, req_grad = True):
         self.log_sf.requires_grad      = req_grad
