@@ -1,17 +1,18 @@
-from util            import *
-from sklearn.cluster import KMeans, MiniBatchKMeans
-from sklearn.utils   import shuffle
-from VFE             import VFE
-from math            import pi
+from util             import *
+from sklearn.cluster  import KMeans, MiniBatchKMeans
+from sklearn.utils    import shuffle
+from VFE              import VFE
+from math             import pi
+from torch.utils.data import TensorDataset, DataLoader
 import torch
 import numpy as np
 import sys
 
 class SVIGP(VFE):
+    """
+    SVI-GP: Gaussian process with mini-batch optimization, as described in Hensman, James, Nicolo Fusi, and Neil D. Lawrence. "Gaussian processes for big data." arXiv preprint arXiv:1309.6835 (2013).
+    """
     def __init__(self, train_x, train_y, conf):
-        """
-        SVI-GP: Gaussian process with mini-batch optimization, as described in Hensman, James, Nicolo Fusi, and Neil D. Lawrence. "Gaussian processes for big data." arXiv preprint arXiv:1309.6835 (2013).
-        """
         super(SVIGP, self).__init__(train_x, train_y, conf)
         self.batch_size = conf.get('batch_size', 128)
         self.fix_u      = conf.get('fix_u', True)
@@ -70,7 +71,41 @@ class SVIGP(VFE):
         return -1 * loss
 
     def train(self):
-        pass
+        self.init_hyper()
+        if self.fix_u:
+            opt = torch.optim.Adam([self.log_sf, self.log_sn, self.log_lscales, self.qm, self.qL], lr = self.lr)
+        else:
+            opt = torch.optim.Adam([self.log_sf, self.log_sn, self.log_lscales, self.u, self.qm, self.qL], lr = self.lr)
+
+        try:
+            dataset = TensorDataset(self.x, self.y)
+            loader  = DataLoader(dataset, batch_size = self.batch_size, shuffle = True)
+            for epoch in range(self.num_epoch):
+                for x, y in loader:
+                    opt.zero_grad()
+                    loss = self.loss(x, y)
+                    loss.backward()
+                    opt.step()
+                print("Epoch %d, loss = %g" % (epoch, loss))
+        except RuntimeError:
+            print(traceback.format_exc())
+        print("Finished SVI-GP training")
+        self.post_train()
 
     def post_train(self):
-        pass
+        if self.num_train < 100000:
+            super(SVIGP, self).post_train() # use the analytical optimal q(u)
+        else:
+            self.hyper_requires_grad(False)
+            sn2        = torch.exp(2 * self.log_sn)
+            Kuu        = self.cov(self.u, self.u) + self.jitter_u * torch.eye(self.m)
+            Kux        = self.cov(self.u, self.x)
+            Kxu        = Kux.t()
+            Luu        = chol(Kuu)
+            LA         = v2tril(self.qL)
+            self.sf2   = torch.exp(2 * self.log_sf)
+            self.sn2   = sn2
+            self.mu    = self.qm
+            self.A     = LA.mm(LA.t())
+            self.Luu   = Luu
+            self.alpha = chol_solve(Luu, self.mu)
