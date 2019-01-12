@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 def chol(A):
     return A.cholesky(upper=False)
@@ -10,3 +11,18 @@ def chol_solve(L, y):
 
 def logDet(L):
     return 2 * L.diag().log().sum()
+
+def v2tril(v, n):
+    """
+    Convert a 1D torch tensor to lower triangular matrix
+    """
+    m = torch.zeros(n, n)
+    m[np.tril_indices(n)] = v
+    return m
+
+def tril2v(m, n):
+    """
+    Convert a n*n matrix into a 1D torch tensor
+    """
+    return m[np.tril_indices(n)]
+
