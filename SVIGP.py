@@ -16,7 +16,11 @@ class SVIGP(VFE):
     def __init__(self, train_x, train_y, conf):
         super(SVIGP, self).__init__(train_x, train_y, conf)
         self.batch_size = conf.get('batch_size', 128)
-        self.fix_u      = conf.get('fix_u', True)
+        self.fix_u      = conf.get('fix_u', False)
+        self.lr_cov     = conf.get('lr_cov', self.lr) # learning rate for log_sf/log_sn/log_lscales
+        self.lr_u       = conf.get('lr_u', self.lr)   # learning rate for the locations of inducing points
+        self.lr_qm      = conf.get('lr_qm', self.lr)  # learning rate for the mean of q(u)
+        self.lr_qL      = conf.get('lr_qL', self.lr)  # learning rate for the covariance matrix of q(u)
 
     def optimal_q(self, n_samples = 1000):
         """
@@ -40,7 +44,6 @@ class SVIGP(VFE):
         m, S    = self.optimal_q()
         self.qm = m
         self.qL = S.tril()
-        # self.qL = tril2v(S, self.m)
 
     def hyper_requires_grad(self, req_grad = True):
         super(SVIGP, self).hyper_requires_grad(req_grad)
@@ -72,15 +75,25 @@ class SVIGP(VFE):
         loss   = self.num_train * (loss_1 + loss_2 + loss_3) / num_x + loss_4
         return -1 * loss
 
+    def set_optimizer(self):
+        if self.fix_u:
+            self.opt_bfgs = torch.optim.LBFGS([self.log_sf, self.log_sn, self.log_lscales, self.qm, self.qL], history_size = 10, max_iter = 5)
+            self.opt = torch.optim.Adam([
+                {'params' : [self.log_sf, self.log_sn, self.log_lscales], 'lr': self.lr_cov}, 
+                {'params' : [self.qm],                                    'lr': self.lr_qm}, 
+                {'params' : [self.qL],                                    'lr': self.lr_qL}])
+        else:
+            self.opt_bfgs = torch.optim.LBFGS([self.log_sf, self.log_sn, self.log_lscales, self.u, self.qm, self.qL], history_size = 10, max_iter = 5)
+            self.opt = torch.optim.Adam([
+                {'params' : [self.log_sf, self.log_sn, self.log_lscales], 'lr': self.lr_cov}, 
+                {'params' : [self.u],                                     'lr': self.lr_u}, 
+                {'params' : [self.qm],                                    'lr': self.lr_qm}, 
+                {'params' : [self.qL],                                    'lr': self.lr_qL}])
+
     def train(self):
         self.init_hyper()
         self.hyper_requires_grad(True)
-        if self.fix_u:
-            opt_bfgs = torch.optim.LBFGS([self.log_sf, self.log_sn, self.log_lscales, self.qm, self.qL], history_size = 10)
-            opt      = torch.optim.Adam([self.log_sf, self.log_sn, self.log_lscales, self.qm, self.qL], lr = self.lr)
-        else:
-            opt_bfgs = torch.optim.LBFGS([self.log_sf, self.log_sn, self.log_lscales, self.u, self.qm, self.qL], history_size = 10)
-            opt      = torch.optim.Adam([self.log_sf, self.log_sn, self.log_lscales, self.u, self.qm, self.qL], lr = self.lr)
+        self.set_optimizer()
 
         try:
             dataset = TensorDataset(self.x, self.y)
@@ -88,25 +101,24 @@ class SVIGP(VFE):
             for epoch in range(1):
                 for x, y in loader:
                     def closure():
-                        opt_bfgs.zero_grad()
+                        self.opt_bfgs.zero_grad()
                         loss = self.loss(x, y)
                         loss.backward()
                         print('\t%g' % loss)
                         return loss
-                    opt_bfgs.step(closure)
+                    self.opt_bfgs.step(closure)
                 if self.debug:
-                    print("Epoch %d, loss = %g" % (epoch, self.loss(self.x, self.y)), flush = True)
+                    print("LBFGS Epoch %d, loss = %g" % (epoch, self.loss(self.x, self.y)), flush = True)
             for epoch in range(self.num_epoch):
                 for x, y in loader:
                     def closure():
-                        opt.zero_grad()
+                        self.opt.zero_grad()
                         loss = self.loss(x, y)
                         loss.backward()
-                        print('\t%g' % loss)
                         return loss
-                    opt.step(closure)
+                    self.opt.step(closure)
                 if self.debug:
-                    print("Epoch %d, loss = %g" % (epoch, self.loss(self.x, self.y)), flush = True)
+                    print("Adam Epoch %d, loss = %g" % (epoch, self.loss(self.x, self.y)), flush = True)
         except RuntimeError:
             if self.debug:
                 print(traceback.format_exc())
@@ -130,3 +142,5 @@ class SVIGP(VFE):
             self.A     = LA.mm(LA.t()) + self.jitter_u * torch.eye(self.m)
             self.Luu   = Luu
             self.alpha = chol_solve(Luu, self.mu)
+
+
