@@ -7,6 +7,7 @@ from torch.utils.data import TensorDataset, DataLoader
 import torch
 import numpy as np
 import sys
+import traceback
 
 class SVIGP(VFE):
     """
@@ -24,7 +25,7 @@ class SVIGP(VFE):
         n_samples = min(self.num_train, n_samples)
         idxs      = torch.randperm(self.num_train)[:n_samples]
         sn2       = torch.exp(2 * self.log_sn)
-        Kuu       = self.cov(self.u, self.u)
+        Kuu       = self.cov(self.u, self.u) + self.jitter_u * torch.eye(self.m)
         Kux       = self.cov(self.u, self.x[idxs])
         Kxu       = Kux.t()
         Luu       = chol(Kuu)
@@ -38,7 +39,8 @@ class SVIGP(VFE):
         super(SVIGP, self).init_hyper()
         m, S    = self.optimal_q()
         self.qm = m
-        self.qL = tril2v(S, self.m)
+        self.qL = S.tril()
+        # self.qL = tril2v(S, self.m)
 
     def hyper_requires_grad(self, req_grad = True):
         super(SVIGP, self).hyper_requires_grad(req_grad)
@@ -51,44 +53,63 @@ class SVIGP(VFE):
         num_x      = X.shape[0]
         sn2        = torch.exp(2 * self.log_sn)
         sf2        = torch.exp(2 * self.log_sf)
-        Kuu        = self.cov(self.u, self.u) + self.jitter_u * torch.eye(self.m)
+        Kuu        = self.cov(self.u, self.u)              + self.jitter_u * torch.eye(self.m)
+        S          = self.qL.tril().mm(self.qL.tril().t()) + self.jitter_u * torch.eye(self.m)
         Kux        = self.cov(self.u, X)
         Kxu        = Kux.t()
         Luu        = chol(Kuu)
+        LS         = chol(S) # XXX: sometimes diagonal of self.qL would go negative
         invKuu_Kux = chol_solve(Luu, Kux)
-        invKuu_m   = chol_solve(Luu, self.qm)
-        LS         = v2tril(sefl.qL)
-        S          = LS.mm(LS.t())
+        invKuu_m   = chol_solve(Luu, self.qm.unsqueeze(1)).squeeze()
 
-        mu   = (Kxu * invKuu_m.t()).sum(dim = 1)
+        mu   = Kxu.mv(invKuu_m)
         K_ii = sf2 - (Kxu * invKuu_Kux.t()).sum(dim = 1)
 
         loss_1 = -0.5 * num_x * torch.log(2 * pi * sn2) - 0.5 * (y - mu).dot(y - mu) / sn2
         loss_2 = -0.5 * K_ii.sum() / sn2
-        loss_3 = -0.5 * (invKuu_Kux.t() * S.mm(invKuu_Kux)).sum(dim = 1) / sn2
+        loss_3 = -0.5 * (invKuu_Kux.t() * S.mm(invKuu_Kux).t()).sum() / sn2
         loss_4 = -0.5 * (chol_solve(Luu, S).trace() + self.qm.dot(invKuu_m) - self.m - logDet(LS) + logDet(Luu)) # KL(q(u) || p(u))
         loss   = self.num_train * (loss_1 + loss_2 + loss_3) / num_x + loss_4
         return -1 * loss
 
     def train(self):
         self.init_hyper()
+        self.hyper_requires_grad(True)
         if self.fix_u:
-            opt = torch.optim.Adam([self.log_sf, self.log_sn, self.log_lscales, self.qm, self.qL], lr = self.lr)
+            opt_bfgs = torch.optim.LBFGS([self.log_sf, self.log_sn, self.log_lscales, self.qm, self.qL], history_size = 10)
+            opt      = torch.optim.Adam([self.log_sf, self.log_sn, self.log_lscales, self.qm, self.qL], lr = self.lr)
         else:
-            opt = torch.optim.Adam([self.log_sf, self.log_sn, self.log_lscales, self.u, self.qm, self.qL], lr = self.lr)
+            opt_bfgs = torch.optim.LBFGS([self.log_sf, self.log_sn, self.log_lscales, self.u, self.qm, self.qL], history_size = 10)
+            opt      = torch.optim.Adam([self.log_sf, self.log_sn, self.log_lscales, self.u, self.qm, self.qL], lr = self.lr)
 
         try:
             dataset = TensorDataset(self.x, self.y)
             loader  = DataLoader(dataset, batch_size = self.batch_size, shuffle = True)
+            for epoch in range(1):
+                for x, y in loader:
+                    def closure():
+                        opt_bfgs.zero_grad()
+                        loss = self.loss(x, y)
+                        loss.backward()
+                        print('\t%g' % loss)
+                        return loss
+                    opt_bfgs.step(closure)
+                if self.debug:
+                    print("Epoch %d, loss = %g" % (epoch, self.loss(self.x, self.y)), flush = True)
             for epoch in range(self.num_epoch):
                 for x, y in loader:
-                    opt.zero_grad()
-                    loss = self.loss(x, y)
-                    loss.backward()
-                    opt.step()
-                print("Epoch %d, loss = %g" % (epoch, loss))
+                    def closure():
+                        opt.zero_grad()
+                        loss = self.loss(x, y)
+                        loss.backward()
+                        print('\t%g' % loss)
+                        return loss
+                    opt.step(closure)
+                if self.debug:
+                    print("Epoch %d, loss = %g" % (epoch, self.loss(self.x, self.y)), flush = True)
         except RuntimeError:
-            print(traceback.format_exc())
+            if self.debug:
+                print(traceback.format_exc())
         print("Finished SVI-GP training")
         self.post_train()
 
@@ -102,10 +123,10 @@ class SVIGP(VFE):
             Kux        = self.cov(self.u, self.x)
             Kxu        = Kux.t()
             Luu        = chol(Kuu)
-            LA         = v2tril(self.qL)
+            LA         = self.qL.tril()
             self.sf2   = torch.exp(2 * self.log_sf)
             self.sn2   = sn2
             self.mu    = self.qm
-            self.A     = LA.mm(LA.t())
+            self.A     = LA.mm(LA.t()) + self.jitter_u * torch.eye(self.m)
             self.Luu   = Luu
             self.alpha = chol_solve(Luu, self.mu)
