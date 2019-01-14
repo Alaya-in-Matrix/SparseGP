@@ -38,7 +38,7 @@ class VFE:
         num_x2  = X2.shape[0]
         sf2     = torch.exp(2 * self.log_sf)
         sn2     = torch.exp(2 * self.log_sn)
-        lscales = torch.exp(self.log_lscales)
+        lscales = 1e-9 + torch.exp(self.log_lscales)
         x       = X1 / lscales
         y       = X2 / lscales
         x_norm  = (x**2).sum(1).view(-1, 1) # TODO: understand this line of code
