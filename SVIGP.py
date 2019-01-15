@@ -21,7 +21,7 @@ class SVIGP(VFE):
         self.lr_u       = conf.get('lr_u', self.lr)   # learning rate for the locations of inducing points
         self.lr_qm      = conf.get('lr_qm', self.lr)  # learning rate for the mean of q(u)
         self.lr_qL      = conf.get('lr_qL', self.lr)  # learning rate for the covariance matrix of q(u)
-        self.bfgs_epoch = conf.get('bfgs_epoch', 1)
+        self.rprop_epoch = conf.get('rprop_epoch', 1)
 
     def optimal_q(self, n_samples = 1000):
         """
@@ -78,14 +78,14 @@ class SVIGP(VFE):
 
     def set_optimizer(self):
         if self.fix_u:
-            self.opt_bfgs = torch.optim.LBFGS([self.log_sf, self.log_sn, self.log_lscales, self.qm, self.qL], history_size = 10, max_iter = 1, lr = 1)
-            self.opt = torch.optim.Adam([
+            self.opt_rprop = torch.optim.Rprop([self.log_sf, self.log_sn, self.log_lscales, self.qm, self.qL])
+            self.opt       = torch.optim.Adam([
                 {'params' : [self.log_sf, self.log_sn, self.log_lscales], 'lr': self.lr_cov}, 
                 {'params' : [self.qm],                                    'lr': self.lr_qm}, 
                 {'params' : [self.qL],                                    'lr': self.lr_qL}])
         else:
-            self.opt_bfgs = torch.optim.LBFGS([self.log_sf, self.log_sn, self.log_lscales, self.u, self.qm, self.qL], history_size = 10, max_iter = 1, lr = 1)
-            self.opt = torch.optim.Adam([
+            self.opt_rprop = torch.optim.Rprop([self.log_sf, self.log_sn, self.log_lscales, self.u, self.qm, self.qL])
+            self.opt       = torch.optim.Adam([
                 {'params' : [self.log_sf, self.log_sn, self.log_lscales], 'lr': self.lr_cov}, 
                 {'params' : [self.u],                                     'lr': self.lr_u}, 
                 {'params' : [self.qm],                                    'lr': self.lr_qm}, 
@@ -99,17 +99,17 @@ class SVIGP(VFE):
         try:
             dataset = TensorDataset(self.x, self.y)
             loader  = DataLoader(dataset, batch_size = self.batch_size, shuffle = True)
-            for epoch in range(self.bfgs_epoch):
+            for epoch in range(self.rprop_epoch):
                 for x, y in loader:
                     def closure():
-                        self.opt_bfgs.zero_grad()
+                        self.opt_rprop.zero_grad()
                         loss = self.loss(x, y)
                         loss.backward()
                         print('\t%g' % loss, flush = True)
                         return loss
-                    self.opt_bfgs.step(closure)
+                    self.opt_rprop.step(closure)
                 if self.debug:
-                    print("LBFGS Epoch %d" % epoch)
+                    print("Rprop Epoch %d" % epoch)
             for epoch in range(self.num_epoch):
                 for x, y in loader:
                     self.opt.zero_grad()
