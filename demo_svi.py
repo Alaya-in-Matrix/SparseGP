@@ -10,11 +10,16 @@ torch.set_default_tensor_type('torch.DoubleTensor')
 
 conf                 = dict()
 conf['debug']        = True
-conf['batch_size']   = 512
+conf['batch_size']   = 1024
 conf['num_inducing'] = 256
-conf['num_epoch']    = 300
+conf['rprop_epoch']  = 10
+conf['num_epoch']    = 20
 conf['kmeans']       = True
-conf['lr']           = 0.001
+conf['lr']           = 3e-4
+conf['lr_cov']       = 4.7e-4
+conf['lr_u']         = 1.3e-2
+conf['lr_qm']        = 1.6e-2
+conf['lr_qL']        = 5.1e-2
 conf['fix_u']        = False
 conf['jitter_u']     = 1e-4
 train_x              = torch.tensor(np.loadtxt('./datasets/kin_40k/train_x'))

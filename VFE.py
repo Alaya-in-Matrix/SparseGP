@@ -169,10 +169,10 @@ class VFE:
         LS         = chol(S)
         self.sf2   = torch.exp(2 * self.log_sf)
         self.sn2   = sn2
-        self.mu    = Kuu.mv(chol_solve(LS, Kux.mv(self.y))) / sn2
+        self.mu    = Kuu.mv(chol_solve(LS, Kux.mv(self.y).unsqueeze(1)).squeeze()) / sn2
         self.A     = Kuu.mm(chol_solve(LS, Kuu))
         self.Luu   = Luu
-        self.alpha = chol_solve(Luu, self.mu)
+        self.alpha = chol_solve(Luu, self.mu.view(-1, 1)).squeeze()
         
     def predict(self, x):
         tx = x;

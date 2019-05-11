@@ -13,7 +13,7 @@ test_y  = torch.tensor(np.loadtxt('./datasets/kin_40k/test_y'))
 conf                 = dict()
 conf['num_inducing'] = 256
 conf['debug']        = False
-conf['num_epoch']    = 300
+conf['num_epoch']    = 100
 conf['jitter_u']     = 1e-6
 conf['kmeans']       = True
 
@@ -22,7 +22,7 @@ model.train_scipy()
 py, ps2 = model.predict(test_x)
 
 mse  = torch.mean((test_y - py)**2)
-smse = mse / torch.var(test_y)
+smse = mse / torch.mean((test_y -  train_y.mean())**2)
 
 log_prob1 = -0.5 * torch.log(2 * pi * ps2)           - 0.5 * (test_y - py)**2 / ps2
 log_prob2 = -0.5 * torch.log(2 * pi * train_y.var()) - 0.5 * (test_y - train_y.mean())**2 / train_y.var()
